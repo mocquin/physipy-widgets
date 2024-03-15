@@ -27,6 +27,8 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     # this is only used for display purpose
     favunit = traitlets.Instance(Quantity, allow_none=True)
 
+    # at __new__, all these attributes are traitlets.Undefined
+
     def __init__(self,
                  value=0.0,
                  disabled=False,
@@ -68,10 +70,12 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         self.value = value
 
         # favunit
-        if favunit is None:
+        if favunit is None and value.favunit is None:
             # we fall back on the passed quantity's favunit
             # (that could be None also)
             self.favunit = value._pick_smart_favunit()
+        elif value.favunit is not None:
+            self.favunit = value.favunit
         else:
             self.favunit = favunit
 
@@ -132,9 +136,10 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     # update text on quantity value change
     @traitlets.observe("value")
     def _update_display_val(self, proposal):
+        
         self.dimension = self.value.dimension
         # set favunit before updating the text
-        self.value.favunit = self.favunit
+        #self.value.favunit = q.favunit
         # now set text with favunit set
         # self.value.favunit is used here
         self.text.value = f'{str(self.value)}'
@@ -152,10 +157,11 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         # try to cast the proposal value to a Quantity
        # if not isinstance(proposal["value"], Quantity):
        #     proposal["value"] = quantify(proposal['value'])
-        if self.fixed_dimension and proposal['value'].dimension != self.dimension:
+        if self.fixed_dimension and (proposal['value'].dimension != self.dimension):
             raise TraitError(
                 'Dimension between old and new value should be consistent.')
-        return proposal['value']
+        return proposal['value'] # after this return, the value is set and all 
+    # observers are called
 
 
 class FDQuantityText(QuantityText):
