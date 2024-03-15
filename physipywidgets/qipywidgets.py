@@ -69,18 +69,10 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         # set quantity
         self.value = value
 
-        # favunit
-        if favunit is None and value.favunit is None:
-            # we fall back on the passed quantity's favunit
-            # (that could be None also)
-            self.favunit = value._pick_smart_favunit()
-        elif value.favunit is not None:
-            self.favunit = value.favunit
-        else:
-            self.favunit = favunit
+        if favunit is None:
+            self.favunit = self.value.favunit
 
-        # TODO : link those 2
-        self.value.favunit = self.favunit
+        
         # link = ipyw.link(
         #    (self.value, "favunit"),
         #   (self, "favunit")
@@ -138,6 +130,7 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     def _update_display_val(self, proposal):
         
         self.dimension = self.value.dimension
+        # self.favunit = 
         # set favunit before updating the text
         #self.value.favunit = q.favunit
         # now set text with favunit set
@@ -162,6 +155,19 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
                 'Dimension between old and new value should be consistent.')
         return proposal['value'] # after this return, the value is set and all 
     # observers are called
+
+    @traitlets.validate("favunit")
+    def _valid_favunit(self, proposal):
+        favunit = proposal['value']
+        if favunit is None and self.value.favunit is None:
+            # we fall back on the passed quantity's favunit
+            # (that could be None also)
+            self.favunit = self.value._pick_smart_favunit()
+        else:
+            self.favunit = favunit
+
+        # TODO : link those 2
+        self.value.favunit = self.favunit
 
 
 class FDQuantityText(QuantityText):
