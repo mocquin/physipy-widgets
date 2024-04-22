@@ -7,7 +7,7 @@ import traitlets
 from traitlets import TraitError
 
 from physipy import quantify, Dimension, Quantity, units, set_favunit, DimensionError, dimensionify
-
+from physipy.quantity.dimension import DIMENSIONLESS
 
 class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     """
@@ -18,7 +18,14 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     # use to store the dimension at startup and check
     # if new value has same dimension when same dimension
     # is mandatory through fixed_dimension
-    dimension = traitlets.Instance(Dimension, allow_none=False)
+    # does the dimension needs to be a trait ?
+    # using lookup as a property on the value is enough ?
+    # dimension = traitlets.Instance(Dimension, allow_none=False)
+    # does not make sense to make this a dimension since dimension
+    # should never be changed inplace, and so using value to observe/validate
+    # should be enough
+    @property
+    def dimension(self): return self.value.dimension
 
     # value trait : a Quantity instance
     value = traitlets.Instance(Quantity, allow_none=False)
@@ -60,23 +67,13 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         # quantity work
         # set dimension
         value = quantify(value)
-        self.dimension = value.dimension
-
-        # if true, any change in value must have same dimension as initial
-        # dimension
         self.fixed_dimension = fixed_dimension
+
+        if favunit is not None:
+            value.favunit = favunit
 
         # set quantity
         self.value = value
-
-        if favunit is None:
-            self.favunit = self.value.favunit
-
-        
-        # link = ipyw.link(
-        #    (self.value, "favunit"),
-        #   (self, "favunit")
-        # )
 
         # set text value after setting the favunit
         self.text.value = str(self.value)
@@ -95,28 +92,20 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
 
             # eval expression with unit context
             try:
-                old_favunit = self.favunit
-                # TODO : use a Lexer/Parser to allow
-                # only valid mathematical text
                 res = eval(expression, self.context)
                 res = quantify(res)
-
-                # update quantity value
                 self.value = res
-                self.favunit = old_favunit
-                # see above, TODO find a way to link those 2
-                self.value.favunit = self.favunit
-
-                # update display_value
-                # self.value.favunit is used here
-                self.text.value = str(self.value)
-
+                self.update_text()
             except BaseException:
                 # if anything fails, do nothing
                 # self.value.favunit is used here
-                self.text.value = str(self.value)
+                self.update_text()
+
         # create the callback
         self.text.on_submit(text_update_values)
+
+    def update_text(self):
+        self.text.value = str(self.value)
 
     @property
     def description(self):
@@ -128,20 +117,30 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     # update text on quantity value change
     @traitlets.observe("value")
     def _update_display_val(self, proposal):
-        
-        self.dimension = self.value.dimension
-        # self.favunit = 
-        # set favunit before updating the text
-        #self.value.favunit = q.favunit
+        # 
+        # update favunit if applicable
+        if self.favunit is None and self.value.favunit is not None:
+            self.favunit = self.value.favunit
+        else:
+            # handle 5*mm to 5*s
+            if self.favunit is not None:
+                if self.favunit.dimension != self.value.dimension:
+                    self.favunit = None
+                # if the dimension is the same, we keep the previous favunit
+                else:
+                    self.value.favunit = self.favunit
+
+        self.update_text()
         # now set text with favunit set
         # self.value.favunit is used here
-        self.text.value = f'{str(self.value)}'
+        #self.text.value = f'{str(self.value)}'
+
 
     @traitlets.observe("favunit")
     def _update_display_val_on_favunit_change(self, proposal):
-        self.value.favunit = self.favunit
-        # self.value.favunit is used here
-        self.text.value = f'{str(self.value)}'
+        #self.value.favunit is used here
+        # self.text.value = f'{str(self.value)}'
+        self.update_text()
 
     # helper to validate value the value if fixed dimension
 
@@ -150,10 +149,17 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         # try to cast the proposal value to a Quantity
        # if not isinstance(proposal["value"], Quantity):
        #     proposal["value"] = quantify(proposal['value'])
-        if self.fixed_dimension and (proposal['value'].dimension != self.dimension):
+        try:
+            current_dimension = self.dimension
+        except TraitError as e:
+            # at init, no self.value, so no self.dimension so we allow the proposed value
+            return proposal['value']
+        if self.fixed_dimension and (proposal['value'].dimension != current_dimension):
             raise TraitError(
-                'Dimension between old and new value should be consistent.')
+                    'Dimension between old and new value should be consistent for fidex_dimension=True.')
         return proposal['value'] # after this return, the value is set and all 
+        
+
     # observers are called
 
     @traitlets.validate("favunit")
@@ -162,12 +168,13 @@ class QuantityText(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         if favunit is None and self.value.favunit is None:
             # we fall back on the passed quantity's favunit
             # (that could be None also)
-            self.favunit = self.value._pick_smart_favunit()
+            return self.value._pick_smart_favunit()
         else:
-            self.favunit = favunit
+            self.value.favunit = favunit
+            return favunit
 
         # TODO : link those 2
-        self.value.favunit = self.favunit
+        # self.value.favunit = self.favunit
 
 
 class FDQuantityText(QuantityText):
@@ -199,16 +206,19 @@ class QuantitySlider(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
     """
 
     # dimension trait : a Dimension instance
-    dimension = traitlets.Instance(Dimension, allow_none=False)
+    # dimension = traitlets.Instance(Dimension, allow_none=False)
     # value trait : a Quantity instance
-    value = traitlets.Instance(Quantity, allow_none=False)
+    value   = traitlets.Instance(Quantity, allow_none=False)
     favunit = traitlets.Instance(Quantity, allow_none=True)
 
     # what the point of those being declared here ? except enforcing
     # to be quantity ?
-    qmin = traitlets.Instance(Quantity, allow_none=False)
-    qmax = traitlets.Instance(Quantity, allow_none=False)
+    qmin  = traitlets.Instance(Quantity, allow_none=False)
+    qmax  = traitlets.Instance(Quantity, allow_none=False)
     qstep = traitlets.Instance(Quantity, allow_none=False)
+
+    @property
+    def dimension(self): return self.value.dimension
 
     def __init__(self, value=None, min=None, max=None, step=None, disabled=False,
                  continuous_update=True, description="Quantity:",
@@ -217,27 +227,56 @@ class QuantitySlider(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
                  **kwargs):
 
         super().__init__(**kwargs)
+        self.fixed_dimension = fixed_dimension
 
-        # quantity work
-        # set dimension
+        if value is not None:
+            value = quantify(value)
+        if min is not None:
+            min   = quantify(min)
+        if max is not None:
+            max   = quantify(max)
+        if step is not None:
+            step  = quantify(step)
+
+        if min is None and value is not None:
+            min = Quantity(0.0, value.dimension)
+        if max is None and value is not None:
+            max = Quantity(100.0, value.dimension)
+        if step is None and value is not None:
+            step = Quantity(0.1, value.dimension)
+
+        if favunit is not None:
+            value.favunit = favunit
+
+        
+
+        # handle None value
         if value is not None:
             value = quantify(value)
         elif min is not None:
             value = min * 1  # to reset favunit
         else:
-            value = 0.0
-        self.dimension = value.dimension
-        # if true, any change in value must have same dimension as initial
-        # dimension
-        self.fixed_dimension = fixed_dimension
+            value = quantify(0.0)
 
+
+        # set slider widget
+        self.slider = ipyw.FloatSlider(value=value.value,
+                                       min=min.value,
+                                       max=max.value,
+                                       step=step.value,
+                                       description=description,
+                                       disabled=disabled,
+                                       continuous_update=continuous_update,
+                                       # orientation=orientation,
+                                       readout=False,  # to disable displaying readout value
+                                       # readout_format=readout_format,
+                                       # layout=Layout(width="50%",
+                                       #              margin="0px",
+                                       #              border="solid red"),
+                                       )
+        
         # set quantity
         self.value = value
-        if favunit is None:
-            self.favunit = value._pick_smart_favunit()
-        else:
-            self.favunit = favunit
-        self.value.favunit = self.favunit
 
         # validate min
         if min is not None:
@@ -264,24 +303,8 @@ class QuantitySlider(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
             qstep = Quantity(0.1, self.value.dimension)
 
         self.qstep = qstep
-        self.qmin = qmin
-        self.qmax = qmax
-
-        # set slider widget
-        self.slider = ipyw.FloatSlider(value=self.value.value,
-                                       min=self.qmin.value,
-                                       max=self.qmax.value,
-                                       step=self.qstep.value,
-                                       description=description,
-                                       disabled=disabled,
-                                       continuous_update=continuous_update,
-                                       # orientation=orientation,
-                                       readout=False,  # to disable displaying readout value
-                                       # readout_format=readout_format,
-                                       # layout=Layout(width="50%",
-                                       #              margin="0px",
-                                       #              border="solid red"),
-                                       )
+        self.qmin  = qmin
+        self.qmax  = qmax
 
         # observe slider value : for interaction with the widget
         def update_label_on_slider_change(change):
@@ -315,12 +338,56 @@ class QuantitySlider(ipyw.Box, ipyw.ValueWidget, ipyw.DOMWidget):
         """
         return self.slider.description
 
+    @traitlets.observe("value")
+    def _update_display_val(self, proposal):
+        # 
+        # update favunit if applicable
+        if self.favunit is None and self.value.favunit is not None:
+            self.favunit = self.value.favunit
+        else:
+            # handle 5*mm to 5*s
+            if self.favunit is not None:
+                if self.favunit.dimension != self.value.dimension:
+                    self.favunit = None
+                # if the dimension is the same, we keep the previous favunit
+                else:
+                    self.value.favunit = self.favunit
+
     @traitlets.validate('value')
     def _valid_value(self, proposal):
         if self.fixed_dimension and proposal['value'].dimension != self.dimension:
             raise TraitError(
                 'Dimension between old and new value should be consistent.')
         return proposal['value']
+    
+
+    @traitlets.validate("favunit")
+    def _valid_favunit(self, proposal):
+        favunit = proposal['value']
+        if favunit is None and self.value.favunit is None:
+            # we fall back on the passed quantity's favunit
+            # (that could be None also)
+            return self.value._pick_smart_favunit()
+        else:
+            self.value.favunit = favunit
+            return favunit
+
+    @traitlets.validate("qmin")
+    def _valid_favunit(self, proposal):
+        proposal = quantify(proposal['value']) 
+        self.slider.min = proposal.value
+
+    @traitlets.validate("qmax")
+    def _valid_favunit(self, proposal):
+        proposal = quantify(proposal['value']) 
+        self.slider.max = proposal.value
+
+
+        # qmin must be a quantity
+        # must have same dimension
+        #if self.dimension 
+        #    raise ValueError()
+    
 
 
 class QuantityTextSlider(QuantityText):
